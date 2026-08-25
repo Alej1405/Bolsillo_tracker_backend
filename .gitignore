@@ -1,0 +1,27 @@
+# Entorno virtual
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ⚠️ SECRETOS — nunca subir
+.env
+
+# macOS
+.DS_Store
+
+# Editores
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Caché de herramientas locales (expone rutas de la máquina)
+.impeccable/
+
+# Dependencias de Node, por si alguna carpeta las trae
+node_modules/
