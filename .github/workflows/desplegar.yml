@@ -1,0 +1,134 @@
+# Despliegue continuo del backend de Bolsillo.
+#
+# Cada push a main valida el código y luego pide al servidor que se actualice.
+#
+# La diferencia con el frontend: allí basta copiar archivos estáticos; aquí hay
+# que instalar dependencias y reiniciar un servicio. Por eso el despliegue no
+# copia nada — le dice al VPS que se sincronice él mismo desde este repositorio.
+# Consecuencia útil: lo que corre en producción es siempre, por construcción,
+# exactamente lo que hay en main.
+#
+# Seguridad, partiendo de que el repositorio es público:
+#
+#   · La clave de despliegue está restringida en el servidor a UN comando:
+#     /usr/local/sbin/desplegar-bolsillo-backend. No puede ejecutar nada más,
+#     ni abrir terminal, ni leer archivos. Comprobado.
+#   · Host, usuario y huella viven en Secrets, que GitHub no entrega a forks.
+#   · El trabajo que usa los secretos no corre nunca desde un pull request.
+#   · Las acciones van fijadas por SHA, no por etiqueta.
+#   · El host se verifica contra una huella conocida, no se acepta a ciegas.
+#
+# Detalles en docs/DESPLIEGUE.md.
+
+name: Desplegar
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desplegar-${{ github.ref }}
+  cancel-in-progress: false   # un despliegue a medias deja el servicio reiniciando
+
+env:
+  VERSION_PYTHON: '3.12'
+
+jobs:
+  validar:
+    name: Validar
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Traer el código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Preparar Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.VERSION_PYTHON }}
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip --quiet
+          pip install -r requirements.txt --quiet
+
+      - name: Comprobar que todo el código compila
+        run: python -m compileall -q app serve.py
+
+      - name: Comprobar que la aplicación arranca
+        env:
+          # Valores de mentira: solo se comprueba que los módulos se importan
+          # y que FastAPI monta sus rutas. No se conecta a ninguna base.
+          DATABASE_URL: postgresql+psycopg://u:p@localhost:5432/x
+          SECRET_KEY: solo-para-validar-en-ci-no-es-un-secreto
+          ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRE_HOURS: '24'
+        run: |
+          python - <<'PY'
+          from app.main import app
+          # Se lee del esquema OpenAPI y no de app.routes: los routers incluidos
+          # quedan anidados y recorrerlos a mano solo devuelve /docs y /openapi.json.
+          rutas = sorted(app.openapi()["paths"])
+          print(f"La aplicación monta {len(rutas)} rutas:")
+          for r in rutas:
+              print(" ", r)
+          assert len(rutas) >= 15, f"solo {len(rutas)} rutas: ¿falta registrar un router?"
+          PY
+
+      - name: Comprobar que el esquema SQL es legible
+        run: |
+          for f in db/*.sql; do
+            [ -s "$f" ] || { echo "::error::$f está vacío"; exit 1; }
+          done
+          echo "$(ls db/*.sql | wc -l) archivos SQL presentes"
+
+  desplegar:
+    name: Publicar en el VPS
+    needs: validar
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Solo en un push directo a main de ESTE repositorio. Un pull request —
+    # venga de donde venga — se queda en la validación, sin ver los secretos.
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'Alej1405/Bolsillo_tracker_backend'
+
+    environment:
+      name: produccion
+      url: https://finance.srv1666598.hstgr.cloud/docs
+
+    steps:
+      # No hace falta traer el código: el servidor lo descarga por su cuenta.
+      - name: Preparar el acceso SSH
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/despliegue
+          chmod 600 ~/.ssh/despliegue
+          printf '%s\n' "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      # El comando que se envía da igual: la clave está restringida y el
+      # servidor ejecuta siempre su script de despliegue. Se manda uno
+      # descriptivo para que quede legible en los registros de auditoría.
+      - name: Pedir al servidor que se actualice
+        run: |
+          ssh -i ~/.ssh/despliegue \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 \
+            -p "${{ secrets.VPS_PUERTO || 22 }}" \
+            "${{ secrets.VPS_USUARIO }}@${{ secrets.VPS_HOST }}" \
+            desplegar-bolsillo-backend
+
+      - name: Borrar la clave del runner
+        if: always()
+        run: rm -f ~/.ssh/despliegue
