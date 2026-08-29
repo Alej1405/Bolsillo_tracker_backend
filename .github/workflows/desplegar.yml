@@ -70,6 +70,12 @@ jobs:
           SECRET_KEY: solo-para-validar-en-ci-no-es-un-secreto
           ALGORITHM: HS256
           ACCESS_TOKEN_EXPIRE_HOURS: '24'
+          # Tampoco es una clave: aquí no se envía ningún correo. Está porque
+          # `resend_api_key` no tiene valor por defecto en Settings, y eso es a
+          # propósito — así un despliegue sin configurar falla al arrancar en
+          # vez de quedarse vivo mandando correos a ninguna parte. El precio es
+          # tener que declararla también aquí.
+          RESEND_API_KEY: re_solo-para-validar-en-ci-no-es-una-clave
         run: |
           python - <<'PY'
           from app.main import app
