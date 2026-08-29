@@ -21,6 +21,7 @@ from app.repositories.user_repository import UserRepository
 from app.services.account_service import AccountService
 from app.services.auth_service import AuthService
 from app.services.category_service import CategoryService
+from app.services.email_service import EmailService
 from app.services.report_service import ReportService
 from app.services.transaction_service import TransactionService
 from app.services.user_service import UserService
@@ -39,6 +40,13 @@ def get_token_manager() -> TokenManager:
         settings.secret_key.get_secret_value(),
         settings.algorithm,
         settings.access_token_expire_hours,
+    )
+
+
+def get_email_service() -> EmailService:
+    return EmailService(
+        settings.resend_api_key.get_secret_value(),
+        settings.resend_from,
     )
 
 
