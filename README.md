@@ -146,27 +146,216 @@ curl -H "Authorization: Bearer $TOKEN" "$API/reports/monthly?year=2026"
 | `summary` | Ingresos, egresos, neto y ahorrado | El neto ya viene restado |
 | `by-category` | En qué se fue la plata | El **porcentaje ya viene calculado** |
 | `monthly` | Evolución del año | Devuelve **los 12 meses**, con ceros donde no hubo datos |
+| `performance` | Cómo va tu dinero | Cada medida trae su **frase ya redactada** y su nivel |
 
 Ese último punto es deliberado: si la API devolviera solo los meses con movimientos, cada
 cliente tendría que rellenar los huecos para dibujar la gráfica. Se rellenan aquí, una vez.
 
+`performance` va un paso más allá. Devuelve seis medidas de cómo va el dinero —cuánto tienes,
+cuánto guardaste, de cada $100 cuánto se queda, cuánto te dura lo que tienes, cuánto gastas al
+día y cómo te fue frente al periodo anterior— y cada una viene con tres cosas: el número
+(`value`), una frase escrita para que la entienda cualquiera (`reading`) y un semáforo
+(`level`: `bien`, `atencion` o `mal`) para pintarla sin tener que interpretarla:
+
+```json
+{
+  "key": "cuanto_aguanta",
+  "label": "Cuánto te dura lo que tienes",
+  "value": 2.1,
+  "unit": "meses",
+  "reading": "Si dejaras de recibir dinero, lo que tienes te alcanza para 2,1 meses.",
+  "level": "atencion"
+}
+```
+
+Detrás son las métricas de siempre —patrimonio, tasa de ahorro, meses de colchón, gasto medio
+diario, variación contra el periodo anterior— pero el nombre técnico no sale nunca a la
+pantalla. Un niño de diez años y una persona de setenta tienen que poder leer la frase y saber
+qué hacer con ella.
+
+**Ahorro**: `net_worth` suma **todos** los bolsillos activos —el efectivo, el banco, la
+tarjeta, la alcancía—, no solo los de tipo `savings`. Ahorrar no es tener una cuenta
+etiquetada como ahorro: es lo que te queda sumando todo lo que tienes.
+
 ### Todas las rutas
 
 <details>
-<summary><b>Ver el catálogo completo (31 rutas)</b></summary>
+<summary><b>Ver el catálogo completo (34 rutas)</b></summary>
 
 | Módulo | Rutas |
 |---|---|
 | **auth** | `POST /auth/register` · `POST /auth/login` · `GET /auth/me` |
-| **accounts** | `GET` · `POST` · `GET /{id}` · `PATCH /{id}` · `DELETE /{id}` · `POST /{id}/archive` |
+| **accounts** | `GET` · `POST` · `GET /{id}` · `PATCH /{id}` · `DELETE /{id}` · `POST /{id}/archive` · `POST /{id}/unarchive` |
 | **categories** | `GET` (árbol) · `POST` · `PATCH /{id}` · `DELETE /{id}` (archiva) |
 | **transactions** | `GET` (filtros y paginación) · `POST` · `GET /{id}` · `PATCH /{id}` · `DELETE /{id}` |
 | **transfers** | `POST /transfers` |
-| **reports** | `dashboard` · `summary` · `by-category` · `monthly` |
-| **users** | `PATCH /users/me` · `PATCH /users/me/password` · `DELETE /users/me` · y las de `super_admin` |
-| **infra** | `GET /salud` |
+| **reports** | `dashboard` · `summary` · `by-category` · `monthly` · `performance` |
+| **users** | `PATCH /users/me` · `PATCH /users/me/password` · `POST /users/me/avatar` · `DELETE /users/me/avatar` · `DELETE /users/me` · y las de `super_admin` |
 
 </details>
+
+### La foto de perfil
+
+```bash
+curl -X POST "$API/users/me/avatar" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "archivo=@mi-foto.jpg"
+```
+
+La respuesta es la ficha del usuario con `avatar_url` puesto:
+`/media/avatares/<id>-<sufijo>.jpg`. Es una ruta del servidor, no una URL completa: el
+cliente la pega a la base de la API. `DELETE /users/me/avatar` la quita y deja `avatar_url`
+en `null`, que es cuando la interfaz muestra las iniciales.
+
+Tres decisiones detrás:
+
+- **La imagen va al disco, no a la base.** En la base queda solo la dirección. Una foto
+  dentro de una tabla la hace pesada, lenta de respaldar y obliga a leerla en cada consulta
+  de usuario aunque nadie la mire.
+- **El formato se comprueba en los bytes, no en el nombre.** Se leen los primeros bytes del
+  archivo y se busca la firma de JPG, PNG o WEBP. Renombrar `virus.exe` a `foto.jpg` no
+  cuesta nada; cambiar los bytes de cabecera sí. Máximo 2 MB.
+- **Cada subida genera un nombre nuevo** con un sufijo aleatorio, y borra la foto anterior
+  del disco. Si el archivo se llamara siempre igual, el navegador seguiría mostrando la foto
+  vieja de su caché después de cambiarla.
+
+---
+
+## Cómo busca la API
+
+Ninguna búsqueda recorre datos en Python: todas se resuelven en PostgreSQL, que es
+quien tiene los índices. Lo que sigue es qué algoritmo usa cada una y por qué.
+
+| Búsqueda | Dónde vive | Estructura que usa | Coste |
+|---|---|---|---|
+| Un movimiento por su id | `transaction_repository.get_by_id` | Índice B-tree de la clave primaria | O(log n) |
+| Mis movimientos, por fecha | `transaction_repository.list_paginated` | Índice B-tree compuesto y parcial `ix_tx_user_date` | O(log n + k) |
+| Texto dentro de la nota | `_aplicar_filtros`, rama `search` | Ninguna: recorrido secuencial | O(n) |
+| Movimientos de un bolsillo | `_aplicar_filtros`, rama `account_id` | Dos índices combinados con mapa de bits | O(log n + k) |
+| Movimientos de una categoría | `_aplicar_filtros`, rama `category_id` | Subconsulta de la familia + `ix_tx_category` | O(log n + k) |
+| El árbol de categorías | `category_repository.list_tree` | Dos consultas, no una por padre | O(p + h) |
+| Un nombre repetido | `category_repository.get_by_name` | Índice único sobre `lower(name)` | O(log n) |
+
+`n` es el total de filas, `k` las que devuelve la página, `p` las categorías padre y `h` sus hijas.
+
+### Búsqueda por índice: el camino normal
+
+El listado de movimientos es lo que más se consulta, y por eso la base tiene un índice
+hecho a su medida:
+
+```sql
+CREATE INDEX ix_tx_user_date ON transactions (user_id, occurred_at DESC)
+    WHERE deleted_at IS NULL;
+```
+
+Un índice B-tree es un árbol ordenado: para encontrar un valor no mira fila por fila,
+sino que baja por el árbol descartando la mitad en cada paso. Ese índice tiene además
+dos decisiones que importan:
+
+- **Es compuesto** (`user_id`, `occurred_at`). Como toda consulta empieza filtrando por
+  usuario y sigue ordenando por fecha, el índice entrega las filas **ya ordenadas**: la
+  base no tiene que ordenarlas después.
+- **Es parcial** (`WHERE deleted_at IS NULL`). El borrado es lógico —la fila se queda en
+  la tabla—, así que las borradas no entran al índice. Ocupa menos y se recorre más rápido.
+
+El plan real lo confirma:
+
+```
+Limit
+  ->  Index Scan using ix_tx_user_date on transactions
+        Index Cond: (user_id = '…')
+```
+
+`Index Scan`: entra por el índice y toca solo las filas que devuelve.
+
+### Búsqueda por texto: por qué esta sí recorre todo
+
+Buscar en las notas se traduce a `note ILIKE '%mercado%'`, y esa consulta **no puede usar
+un índice B-tree**. La razón es lo que hace el árbol: ordena las palabras por su comienzo,
+igual que un diccionario. Un diccionario sirve para buscar "mercado", no para buscar
+"todas las palabras que contengan 'erca' en algún lugar". El comodín del principio deja el
+orden inservible.
+
+El plan lo dice sin rodeos:
+
+```
+Seq Scan on transactions
+  Filter: ((deleted_at IS NULL) AND (note ~~* '%mercado%') AND (user_id = '…'))
+  Rows Removed by Filter: 64
+```
+
+`Seq Scan` es recorrido secuencial: lee las filas del usuario una por una y descarta las
+que no coinciden. Con los volúmenes de una persona —cientos o pocos miles de movimientos—
+es instantáneo y no vale la pena complicarlo. Si algún día una cuenta llegara a cientos de
+miles de notas, el arreglo ya está identificado: un índice **GIN con `pg_trgm`**, que parte
+cada texto en grupos de tres letras e indexa esos fragmentos, con lo que el comodín inicial
+deja de estorbar.
+
+```sql
+-- No está aplicado: queda anotado para cuando el volumen lo pida.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX ix_tx_note_trgm ON transactions USING gin (note gin_trgm_ops);
+```
+
+### Filtrar por categoría: expandir la familia, sin recursión
+
+Al filtrar por una categoría padre deben entrar también sus hijas. En vez de recorrer un
+árbol, se resuelve con una subconsulta:
+
+```python
+familia = select(Category.id).where(
+    or_(Category.id == category_id, Category.parent_id == category_id)
+)
+stmt = stmt.where(Transaction.category_id.in_(familia))
+```
+
+No hay recursión porque **el árbol tiene dos niveles y solo dos**: padre e hija. Un nivel
+de expansión cubre todos los casos. Si el modelo admitiera profundidad libre haría falta
+un `WITH RECURSIVE`, y con él un coste mucho mayor por consulta.
+
+### Un movimiento que cuenta para dos bolsillos
+
+Una transferencia toca dos cuentas: la de origen (`account_id`) y la de destino
+(`counter_account_id`). Al filtrar por un bolsillo, la fila debe aparecer si es cualquiera
+de las dos, y eso es un `OR` sobre dos columnas, cada una con su índice
+(`ix_tx_account`, `ix_tx_counter`). PostgreSQL no elige uno: usa los dos y combina los
+resultados con un mapa de bits (`BitmapOr`) antes de ir a la tabla.
+
+### El árbol de categorías: 2 consultas, no 18
+
+`list_tree` pide los padres y usa `selectinload` para las hijas:
+
+```python
+select(Category).where(...).options(selectinload(Category.children))
+```
+
+`selectinload` trae **todas** las hijas en una segunda consulta (`WHERE parent_id IN (…)`).
+Sin eso, el ORM pediría las hijas de cada padre por separado: con 17 categorías padre serían
+18 viajes a la base en lugar de 2. Es el problema N+1, y esta es su solución.
+
+### Nombres repetidos: buscar como busca el índice
+
+Para saber si ya existe una categoría con ese nombre, la consulta compara
+`lower(Category.name) == name.lower()`. No es capricho: el índice único de la base también
+está definido sobre `lower(name)`, así que la búsqueda usa exactamente el mismo índice que
+después impide el duplicado. Si la consulta comparara el nombre tal cual, el índice no
+serviría y "Salud" y "salud" pasarían dos veces el control de la aplicación antes de que la
+base rechazara el insert.
+
+### Paginación
+
+El listado pagina con `LIMIT` y `OFFSET`, y cuenta el total **antes** de recortar, sobre los
+mismos filtros:
+
+```python
+total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+stmt = stmt.limit(page_size).offset((page - 1) * page_size)
+```
+
+`OFFSET` tiene un límite conocido: para llegar a la página 500 la base atraviesa las 499
+anteriores y las descarta. En una aplicación personal, donde nadie pasa de las primeras
+páginas, es la opción correcta por lo simple. La alternativa para volúmenes grandes es
+paginar por cursor —"dame lo anterior a esta fecha"—, que no necesita saltar filas.
 
 ---
 
@@ -186,7 +375,7 @@ Con eso, `localhost:5434` es la base del servidor. En pgAdmin o DBeaver:
 | Host | `127.0.0.1` |
 | Puerto | `5434` |
 | Base | `finance_tracker` |
-| Usuario | `equipo` (solo lectura) |
+| Usuario | `consulta` (solo lectura) |
 | Contraseña | se entrega aparte, nunca por el repositorio |
 
 ### El modelo de datos
@@ -324,6 +513,10 @@ probar todas las rutas sin escribir una línea de código.
 | `SECRET_KEY` | Firma los JWT. Genérala con `openssl rand -hex 32` |
 | `ALGORITHM` | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_HOURS` | Validez del token (24) |
+| `RESEND_API_KEY` | Clave del panel de Resend, para el correo saliente |
+| `RESEND_FROM` | Remitente. Su dominio debe estar verificado en Resend |
+| `MEDIA_DIR` | Carpeta de las fotos de perfil (`media`). En el servidor, un disco que sobreviva al despliegue |
+| `AVATAR_MAX_MB` | Tope por foto (2) |
 
 `.env` está en el `.gitignore` y **nunca** debe subirse.
 

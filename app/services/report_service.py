@@ -12,7 +12,7 @@ Tres decisiones que se ven aqui y conviene poder explicar:
 
 import calendar
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from app.models.category import CategoryKind
@@ -34,6 +34,25 @@ def _porcentaje(parte: Decimal, total: Decimal) -> float:
     if not total:
         return 0.0
     return round(float(parte) / float(total) * 100, 1)
+
+
+def _plata(monto: Decimal) -> str:
+    """Un monto como se lee en voz alta: $1.248,50.
+
+    Miles con punto y decimales con coma, que es como se escribe en Ecuador.
+    El backend guarda con punto decimal; esto es solo para las frases.
+    """
+    entero, decimales = f"{abs(monto):.2f}".split(".")
+    grupos = [entero[max(i - 3, 0):i] for i in range(len(entero), 0, -3)][::-1]
+    return f"${'.'.join(grupos)},{decimales}"
+
+
+def _meses(cantidad: float) -> str:
+    """'2,5 meses' o 'un mes', sin decimales cuando es redondo."""
+    if cantidad == 1:
+        return "un mes"
+    texto = f"{cantidad:.1f}".replace(".0", "").replace(".", ",")
+    return f"{texto} meses"
 
 
 def _mes_completo(cuando: date) -> tuple[date, date]:
@@ -194,4 +213,199 @@ class ReportService:
                 for item in por_categoria["items"][:5]
             ],
             "recent_transactions": self._movimientos.recent(user_id, limit=5),
+        }
+
+    # ── Rendimiento ──────────────────────────────────────────────────────
+
+    def performance(self, user_id: uuid.UUID, desde: date, hasta: date) -> dict:
+        """Cinco medidas de como va el dinero, cada una con su frase.
+
+        La regla de esta pantalla: **el numero solo no sirve**. Una tasa de
+        ahorro del 23% no le dice nada a quien nunca vio ese termino, asi que
+        cada medida viaja con una `lectura` escrita en la lengua de todos los
+        dias: "de cada 100 que te entran, guardas 23". Un nino de diez anos y
+        una persona de ochenta tienen que entender la frase sin ayuda.
+
+        Por eso tambien `nivel`: bien / atencion / mal. Es lo que permite que
+        la pantalla pinte un color sin tener que saber que significa cada
+        indicador.
+        """
+        rango = self._repo.totales_del_rango(user_id, desde, hasta)
+        entro = Decimal(rango.income)
+        salio = Decimal(rango.expense)
+        guardado = entro - salio
+
+        tengo = self._repo.patrimonio(user_id)
+        gasto_normal = self._repo.gasto_medio_mensual(user_id)
+
+        dias = max((hasta - desde).days + 1, 1)
+        por_dia = (salio / dias).quantize(Decimal("0.01"))
+
+        # Mismo numero de dias hacia atras, para comparar peras con peras.
+        antes_hasta = desde - timedelta(days=1)
+        antes_desde = antes_hasta - timedelta(days=dias - 1)
+        antes = self._repo.totales_del_rango(user_id, antes_desde, antes_hasta)
+        guardado_antes = Decimal(antes.income) - Decimal(antes.expense)
+        cambio = guardado - guardado_antes
+
+        return {
+            "period": {"from": desde, "to": hasta},
+            "saved_in_period": guardado,
+            "net_worth": tengo,
+            "metrics": [
+                self._cuanto_tengo(tengo),
+                self._cuanto_guarde(guardado, entro),
+                self._de_cada_cien(guardado, entro),
+                self._cuanto_aguanta(tengo, gasto_normal),
+                self._gasto_diario(por_dia),
+                self._comparado_con_antes(cambio, guardado_antes),
+            ],
+        }
+
+    def _cuanto_tengo(self, tengo: Decimal) -> dict:
+        """Lo que la persona llama 'mi ahorro': todo lo que tiene junto.
+
+        No son solo las cuentas de tipo ahorro. Quien guarda su plata en el
+        efectivo y en el banco tiene ahorro igual, y `total_saved` le decia
+        que cero.
+        """
+        return {
+            "key": "cuanto_tengo",
+            "label": "Cuánto tienes guardado",
+            "value": tengo,
+            "unit": "USD",
+            "reading": (
+                f"Sumando todos tus bolsillos —el efectivo, el banco, todo— "
+                f"tienes {_plata(tengo)}."
+            ),
+            "level": "bien" if tengo > 0 else "atencion",
+        }
+
+    def _cuanto_guarde(self, guardado: Decimal, entro: Decimal) -> dict:
+        if entro == CERO and guardado == CERO:
+            lectura = "Todavía no hay movimientos en estas fechas."
+            nivel = "atencion"
+        elif guardado >= CERO:
+            lectura = f"Te quedaron {_plata(guardado)} sin gastar."
+            nivel = "bien"
+        else:
+            lectura = (
+                f"Gastaste {_plata(-guardado)} más de lo que te entró. "
+                f"Saliste de lo que ya tenías guardado."
+            )
+            nivel = "mal"
+        return {
+            "key": "cuanto_guarde",
+            "label": "Cuánto guardaste",
+            "value": guardado,
+            "unit": "USD",
+            "reading": lectura,
+            "level": nivel,
+        }
+
+    def _de_cada_cien(self, guardado: Decimal, entro: Decimal) -> dict:
+        """La tasa de ahorro, dicha sin decir 'tasa de ahorro'."""
+        if entro <= CERO:
+            return {
+                "key": "de_cada_cien",
+                "label": "De cada $100 que te entran",
+                "value": 0.0,
+                "unit": "%",
+                "reading": "Aún no registras ingresos, así que no hay nada que comparar.",
+                "level": "atencion",
+            }
+
+        pct = _porcentaje(guardado, entro) if guardado > CERO else round(
+            float(guardado) / float(entro) * 100, 1
+        )
+        guarda = max(int(round(pct)), 0)
+        if pct < 0:
+            lectura = (
+                f"De cada $100 que te entran, gastas ${100 + abs(int(round(pct)))}. "
+                f"Estás sacando de lo guardado."
+            )
+            nivel = "mal"
+        elif pct < 10:
+            lectura = f"De cada $100 que te entran, guardas ${guarda}. Es poco."
+            nivel = "atencion"
+        else:
+            lectura = f"De cada $100 que te entran, guardas ${guarda}."
+            nivel = "bien"
+
+        return {
+            "key": "de_cada_cien",
+            "label": "De cada $100 que te entran",
+            "value": pct,
+            "unit": "%",
+            "reading": lectura,
+            "level": nivel,
+        }
+
+    def _cuanto_aguanta(self, tengo: Decimal, gasto_normal: Decimal) -> dict:
+        """Meses de colchon. Es la medida que mas tranquiliza o mas alerta."""
+        if gasto_normal <= CERO:
+            return {
+                "key": "cuanto_aguanta",
+                "label": "Cuánto te dura lo que tienes",
+                "value": 0.0,
+                "unit": "meses",
+                "reading": "Cuando lleves un mes registrando gastos podremos decírtelo.",
+                "level": "atencion",
+            }
+
+        meses = round(float(tengo) / float(gasto_normal), 1)
+        if meses < 1:
+            lectura = "Lo que tienes no alcanza para un mes de tus gastos normales."
+            nivel = "mal"
+        elif meses < 3:
+            lectura = (
+                f"Si dejaras de recibir dinero, lo que tienes te alcanza "
+                f"para {_meses(meses)}."
+            )
+            nivel = "atencion"
+        else:
+            lectura = (
+                f"Si dejaras de recibir dinero, lo que tienes te alcanza "
+                f"para {_meses(meses)}. Vas bien."
+            )
+            nivel = "bien"
+
+        return {
+            "key": "cuanto_aguanta",
+            "label": "Cuánto te dura lo que tienes",
+            "value": meses,
+            "unit": "meses",
+            "reading": lectura,
+            "level": nivel,
+        }
+
+    def _gasto_diario(self, por_dia: Decimal) -> dict:
+        return {
+            "key": "gasto_diario",
+            "label": "Lo que gastas al día",
+            "value": por_dia,
+            "unit": "USD",
+            "reading": f"En promedio se te van {_plata(por_dia)} cada día.",
+            "level": "bien",
+        }
+
+    def _comparado_con_antes(self, cambio: Decimal, antes: Decimal) -> dict:
+        """Contra el mismo numero de dias anteriores, no contra 'el mes pasado'."""
+        if cambio > CERO:
+            lectura = f"Guardaste {_plata(cambio)} más que en el periodo anterior."
+            nivel = "bien"
+        elif cambio < CERO:
+            lectura = f"Guardaste {_plata(-cambio)} menos que en el periodo anterior."
+            nivel = "atencion"
+        else:
+            lectura = "Guardaste lo mismo que en el periodo anterior."
+            nivel = "bien"
+
+        return {
+            "key": "comparado_con_antes",
+            "label": "Comparado con antes",
+            "value": cambio,
+            "unit": "USD",
+            "reading": lectura,
+            "level": nivel,
         }

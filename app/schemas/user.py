@@ -47,6 +47,9 @@ class UserRead(BaseModel):
     role: UserRole
     id: uuid.UUID
     created_at: datetime
+    #ruta de la foto, relativa al servidor ("/media/avatares/xxx.jpg"). Es None
+    #mientras no suba ninguna, y entonces la interfaz muestra las iniciales.
+    avatar_url: str | None = None
 
 #clase que actualiza el usuario
 class UserUpdate(BaseModel):

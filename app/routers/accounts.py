@@ -5,8 +5,11 @@ que se le pasa al servicio. El cliente nunca envia un user_id, asi que pedir
 la cuenta de otro acaba en 404.
 
 Dos formas de quitar una cuenta de en medio, a proposito:
-  · POST /accounts/{id}/archive   la oculta y conserva su historial
-  · DELETE /accounts/{id}         la borra, solo si no tiene movimientos
+  · POST /accounts/{id}/archive     la oculta y conserva su historial
+  · DELETE /accounts/{id}           la borra, solo si no tiene movimientos
+
+Y una para traerla de vuelta:
+  · POST /accounts/{id}/unarchive   la saca del archivo
 """
 
 import uuid
@@ -101,6 +104,22 @@ def archive_account(
     service: AccountService = Depends(get_account_service),
 ):
     cuenta = service.archive_account(usuario.id, account_id)
+    db.commit()
+    return cuenta
+
+
+@router.post(
+    "/{account_id}/unarchive",
+    response_model=AccountRead,
+    summary="Desarchivar una cuenta (vuelve a contar en el patrimonio)",
+)
+def unarchive_account(
+    account_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+    service: AccountService = Depends(get_account_service),
+):
+    cuenta = service.unarchive_account(usuario.id, account_id)
     db.commit()
     return cuenta
 

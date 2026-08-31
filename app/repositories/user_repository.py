@@ -51,6 +51,12 @@ class UserRepository:
         self._db.flush()
         return usuario
 
+    def set_avatar(self, usuario: User, avatar_url: str | None) -> User:
+        """Guarda la ruta de la foto. Con None la quita."""
+        usuario.avatar_url = avatar_url
+        self._db.flush()
+        return usuario
+
     def set_active(self, usuario: User, is_active: bool) -> User:
         usuario.is_active = is_active
         self._db.flush()

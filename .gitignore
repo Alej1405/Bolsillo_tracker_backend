@@ -25,3 +25,6 @@ __pycache__/
 
 # Dependencias de Node, por si alguna carpeta las trae
 node_modules/
+
+# Fotos de perfil subidas por los usuarios
+media/

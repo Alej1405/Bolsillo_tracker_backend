@@ -48,6 +48,11 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(
         server_default=text("true")
     )
+    #ruta publica de la foto ("/media/avatares/xxx.jpg"). NULL mientras no suba
+    #ninguna: la imagen vive en disco, aqui solo queda donde encontrarla.
+    avatar_url: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

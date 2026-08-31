@@ -2,6 +2,7 @@
 
 Dos grupos, separados por quien puede usarlos:
   · /users/me      cualquier usuario autenticado, sobre su propia cuenta
+                   (nombre, contrasena, foto y baja)
   · /users/{id}    solo super_admin, sobre cualquier cuenta
 
 Los dos borrados son distintos a proposito: el usuario se da de baja
@@ -10,9 +11,10 @@ Los dos borrados son distintos a proposito: el usuario se da de baja
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, get_user_service, require_super_admin
 from app.models.user import User
@@ -60,6 +62,41 @@ def change_my_password(
 ):
     service.change_password(usuario, datos.current_password, datos.new_password)
     db.commit()
+
+
+@router.post(
+    "/me/avatar",
+    response_model=UserRead,
+    summary="Subir la foto de perfil",
+)
+def upload_my_avatar(
+    archivo: UploadFile = File(..., description="Imagen JPG, PNG o WEBP"),
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+    service: UserService = Depends(get_user_service),
+):
+    #se lee un byte mas del tope para poder distinguir "justo en el limite" de
+    #"se pasa", sin llegar a cargar en memoria un archivo enorme.
+    tope = settings.avatar_max_mb * 1024 * 1024
+    contenido = archivo.file.read(tope + 1)
+    actualizado = service.save_avatar(usuario, contenido)
+    db.commit()
+    return actualizado
+
+
+@router.delete(
+    "/me/avatar",
+    response_model=UserRead,
+    summary="Quitar la foto de perfil",
+)
+def delete_my_avatar(
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+    service: UserService = Depends(get_user_service),
+):
+    actualizado = service.remove_avatar(usuario)
+    db.commit()
+    return actualizado
 
 
 @router.delete(

@@ -63,6 +63,12 @@ class AccountRepository:
         self._db.flush()
         return cuenta
 
+    def unarchive(self, cuenta: Account) -> Account:
+        """Devuelve la cuenta a la vida: vuelve a contar en el patrimonio."""
+        cuenta.archived_at = None
+        self._db.flush()
+        return cuenta
+
     def delete(self, cuenta: Account) -> None:
         self._db.delete(cuenta)
         self._db.flush()

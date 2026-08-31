@@ -10,6 +10,8 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.account import AccountType
@@ -109,3 +111,34 @@ class DashboardResponse(BaseModel):
     accounts: list[DashboardAccount]
     top_expense_categories: list[DashboardCategory]
     recent_transactions: list[TransactionRead]
+
+
+# ── Rendimiento ──────────────────────────────────────────────────────────
+
+
+class Metric(BaseModel):
+    """Una medida, con todo lo necesario para pintarla sin saber que significa.
+
+    `reading` es la parte importante: la frase en lengua de todos los dias.
+    Un numero suelto —23,4%— no le dice nada a quien nunca vio el termino
+    "tasa de ahorro"; "de cada $100 que te entran, guardas $23" si.
+
+    `level` traduce el numero a bien / atencion / mal para que la interfaz
+    elija un color sin tener que interpretar cada indicador por su cuenta.
+    """
+
+    key: str
+    label: str
+    value: Decimal | float
+    unit: str
+    reading: str
+    level: Literal["bien", "atencion", "mal"]
+
+
+class PerformanceResponse(BaseModel):
+    period: Period
+    #: Lo que entro menos lo que salio en el rango. El ahorro del periodo.
+    saved_in_period: Decimal
+    #: La suma de todos los bolsillos activos. Lo que se tiene, aqui y ahora.
+    net_worth: Decimal
+    metrics: list[Metric]

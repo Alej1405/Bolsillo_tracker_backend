@@ -12,6 +12,7 @@ from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy.dialects.postgresql import INTERVAL
 from sqlalchemy.orm import Session, aliased
 
 from app.models.account import Account, AccountType
@@ -179,3 +180,78 @@ class ReportRepository:
             .order_by(mes)
         )
         return self._db.execute(stmt).all()
+
+    # ── Rendimiento ──────────────────────────────────────────────────────
+    #
+    # Lo que sigue responde a una queja concreta: `total_saved` solo cuenta
+    # las transferencias que entran a una cuenta de tipo savings, asi que
+    # quien ahorra dejando la plata quieta en el banco o en el efectivo ve
+    # un cero que no es verdad.
+    #
+    # Aqui se miden las dos cosas por separado, porque son distintas:
+    #   · lo GUARDADO en el periodo  = lo que entro menos lo que salio
+    #   · lo que TIENES ahora        = la suma de todos los bolsillos vivos
+    #
+    # La primera es un resultado del mes; la segunda es una foto del momento.
+
+    def patrimonio(self, user_id: uuid.UUID) -> Decimal:
+        """La suma de todos los bolsillos activos. Es 'cuanto tengo'.
+
+        Sale de la vista account_balances, la misma que alimenta el saldo de
+        cada cuenta, para que no haya dos formulas del mismo numero. Las
+        archivadas no cuentan: estan fuera del patrimonio a proposito.
+        """
+        stmt = select(
+            func.coalesce(func.sum(Account.balance), 0)
+        ).where(
+            Account.user_id == user_id,
+            Account.archived_at.is_(None),
+        )
+        return Decimal(self._db.execute(stmt).scalar_one() or 0)
+
+    def totales_del_rango(self, user_id: uuid.UUID, desde: date, hasta: date):
+        """Entradas, salidas y numero de movimientos de un rango.
+
+        Es `summary` sin el ahorro ni el join con la cuenta destino: el
+        rendimiento no necesita esa parte y el join sobra.
+        """
+        stmt = (
+            select(
+                self._suma_si(TransactionType.INCOME).label("income"),
+                self._suma_si(TransactionType.EXPENSE).label("expense"),
+                func.count().label("count"),
+            )
+            .select_from(Transaction)
+            .where(
+                *self._vivas(user_id),
+                Transaction.occurred_at >= desde,
+                Transaction.occurred_at <= hasta,
+            )
+        )
+        return self._db.execute(stmt).one()
+
+    def gasto_medio_mensual(self, user_id: uuid.UUID, meses: int = 6) -> Decimal:
+        """Cuanto se gasta en un mes normal, mirando los ultimos N meses.
+
+        Se usa para saber cuantos meses aguanta el dinero guardado. Se toma un
+        promedio y no el ultimo mes porque un mes con una compra grande daria
+        una respuesta alarmista, y uno de vacaciones una tranquilizadora.
+
+        Solo cuentan los meses que tuvieron algun gasto: dividir para 6 cuando
+        la persona lleva dos meses usando la app parte el promedio a la mitad.
+        """
+        mes = func.date_trunc("month", Transaction.occurred_at)
+        gastos_por_mes = (
+            select(func.sum(Transaction.amount).label("total"))
+            .where(
+                *self._vivas(user_id),
+                Transaction.type == TransactionType.EXPENSE,
+                Transaction.occurred_at >= func.current_date() - func.cast(
+                    func.concat(meses, " months"), INTERVAL
+                ),
+            )
+            .group_by(mes)
+            .subquery()
+        )
+        stmt = select(func.coalesce(func.avg(gastos_por_mes.c.total), 0))
+        return Decimal(self._db.execute(stmt).scalar_one() or 0)

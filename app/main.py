@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from app.config import settings
 from app.routers import accounts, auth, categories, reports, transactions, users
 from app.core.errors import DomainError
 
@@ -29,6 +33,14 @@ app.add_exception_handler(RequestValidationError, validation_handler)
 app.add_exception_handler(StarletteHTTPException, http_handler)
 app.add_exception_handler(DomainError, domain_handler)
 app.add_exception_handler(Exception, unhandled_handler)
+
+#las fotos de perfil se sirven como archivos, no como respuestas de la API:
+#una imagen no cambia y el servidor la entrega directo, sin pasar por la base
+#ni por el token. La carpeta se crea al arrancar porque StaticFiles no monta
+#sobre una ruta que no existe y el servidor no levantaria.
+MEDIOS = Path(settings.media_dir)
+MEDIOS.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=MEDIOS), name="media")
 
 #ejecutamos los routers
 app.include_router(auth.router, prefix="/api/v1")

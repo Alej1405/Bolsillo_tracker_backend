@@ -13,6 +13,7 @@ from app.core.dependencies import get_current_user, get_report_service
 from app.models.category import CategoryKind
 from app.models.user import User
 from app.schemas.report import (
+    PerformanceResponse,
     ByCategoryResponse,
     DashboardResponse,
     MonthlyResponse,
@@ -76,3 +77,28 @@ def dashboard(
     service: ReportService = Depends(get_report_service),
 ):
     return service.dashboard(usuario.id)
+
+
+@router.get(
+    "/performance",
+    response_model=PerformanceResponse,
+    summary="Como va tu dinero: cinco medidas, cada una explicada en una frase",
+)
+def performance(
+    desde: date = Query(alias="from", description="Fecha inicial inclusive"),
+    hasta: date = Query(alias="to", description="Fecha final inclusive"),
+    usuario: User = Depends(get_current_user),
+    service: ReportService = Depends(get_report_service),
+):
+    """Rendimiento y ahorro, en lengua de todos los dias.
+
+    Devuelve dos cifras y una lista de medidas. Cada medida trae su `reading`:
+    la misma informacion dicha de forma que no haga falta saber finanzas para
+    entenderla.
+
+    La diferencia con `/summary`: `total_saved` de alli cuenta solo lo que se
+    transfirio a una cuenta de tipo ahorro. Aqui `net_worth` es todo lo que la
+    persona tiene junto —efectivo, banco, lo que sea—, que es lo que cualquiera
+    llama "mi ahorro".
+    """
+    return service.performance(usuario.id, desde, hasta)

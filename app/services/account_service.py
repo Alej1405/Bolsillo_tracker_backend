@@ -49,6 +49,16 @@ class AccountService:
         """Oculta la cuenta sin borrar el historial"""
         return self._repo.archive(self.get_account(user_id, account_id))
 
+    def unarchive_account(self, user_id: uuid.UUID, account_id: uuid.UUID) -> Account:
+        """Saca la cuenta del archivo y la vuelve a contar en el patrimonio.
+
+        No hay nada que validar antes: archivar no destruye nada, asi que
+        deshacerlo tampoco puede chocar con nada. Si el nombre se repitiera
+        con otra cuenta creada mientras estaba archivada, el UNIQUE de la
+        tabla lo impide y sube como IntegrityError.
+        """
+        return self._repo.unarchive(self.get_account(user_id, account_id))
+
     def update_account(self, user_id: uuid.UUID, account_id: uuid.UUID, datos:AccountUpdate) -> Account:
         cuenta = self.get_account(user_id, account_id)
         cambios = datos.model_dump(exclude_unset=True)

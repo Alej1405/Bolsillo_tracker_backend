@@ -114,17 +114,17 @@ def _bienvenida_html(nombre: str) -> str:
               <td style="padding:32px;">
                 <p style="margin:0 0 16px;font-size:20px;font-weight:bold;color:#0f172a;">Hola, {nombre}</p>
                 <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#475569;">
-                  Tu cuenta ya esta lista. Bolsillo es para llevar tus finanzas sin
-                  complicarte: registras lo que entra y lo que sale, y la aplicacion
+                  Tu cuenta ya está lista. Bolsillo es para llevar tus finanzas sin
+                  complicarte: registras lo que entra y lo que sale, y la aplicación
                   arma los reportes por ti.
                 </p>
                 <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#475569;">
                   Para empezar, crea tus bolsillos &mdash; efectivo, banco, tarjeta,
                   ahorro &mdash; y registra tu primer movimiento. Con eso ya tienes
-                  de donde leer.
+                  de dónde leer.
                 </p>
                 <p style="margin:0 0 8px;font-size:13px;line-height:1.6;color:#64748b;">
-                  Si no fuiste tu quien creo esta cuenta, ignora este correo.
+                  Si no fuiste tú quien creó esta cuenta, ignora este correo.
                 </p>
               </td>
             </tr>
@@ -146,12 +146,12 @@ def _bienvenida_texto(nombre: str) -> str:
     return f"""\
 Hola, {nombre}
 
-Tu cuenta ya esta lista. Bolsillo es para llevar tus finanzas sin complicarte:
-registras lo que entra y lo que sale, y la aplicacion arma los reportes por ti.
+Tu cuenta ya está lista. Bolsillo es para llevar tus finanzas sin complicarte:
+registras lo que entra y lo que sale, y la aplicación arma los reportes por ti.
 
 Para empezar, crea tus bolsillos -efectivo, banco, tarjeta, ahorro- y registra
-tu primer movimiento. Con eso ya tienes de donde leer.
+tu primer movimiento. Con eso ya tienes de dónde leer.
 
-Si no fuiste tu quien creo esta cuenta, ignora este correo.
+Si no fuiste tú quien creó esta cuenta, ignora este correo.
 
 Bolsillo - Hecho en Ecuador"""

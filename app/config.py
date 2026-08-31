@@ -20,4 +20,11 @@ class Settings(BaseSettings):
     #rechaza con 403.
     resend_from: str = 'Bolsillo <hola@mashaec.net>'
 
+    #carpeta donde se guardan las fotos de perfil. Fuera del codigo a proposito:
+    #en el servidor apunta a un disco que sobrevive a cada despliegue.
+    media_dir: str = 'media'
+    #tope por foto. Una foto de perfil se ve en 200 px; 2 MB es de sobra y evita
+    #que alguien suba un archivo de camara de 40 MB y llene el disco.
+    avatar_max_mb: int = 2
+
 settings = Settings()
