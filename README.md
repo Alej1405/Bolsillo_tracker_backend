@@ -180,7 +180,7 @@ etiquetada como ahorro: es lo que te queda sumando todo lo que tienes.
 ### Todas las rutas
 
 <details>
-<summary><b>Ver el catálogo completo (34 rutas)</b></summary>
+<summary><b>Ver el catálogo completo (35 rutas)</b></summary>
 
 | Módulo | Rutas |
 |---|---|
@@ -191,6 +191,7 @@ etiquetada como ahorro: es lo que te queda sumando todo lo que tienes.
 | **transfers** | `POST /transfers` |
 | **reports** | `dashboard` · `summary` · `by-category` · `monthly` · `performance` |
 | **users** | `PATCH /users/me` · `PATCH /users/me/password` · `POST /users/me/avatar` · `DELETE /users/me/avatar` · `DELETE /users/me` · y las de `super_admin` |
+| **infra** | `GET /salud` · `GET /` (redirige a `/docs`) — definidas en `serve.py`, el envoltorio del despliegue |
 
 </details>
 

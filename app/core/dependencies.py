@@ -69,7 +69,7 @@ def get_user_service(
 
 
 def get_account_service(db: Session = Depends(get_db)) -> AccountService:
-    return AccountService(AccountRepository(db))
+    return AccountService(AccountRepository(db), TransactionRepository(db))
 
 
 def get_category_service(db: Session = Depends(get_db)) -> CategoryService:

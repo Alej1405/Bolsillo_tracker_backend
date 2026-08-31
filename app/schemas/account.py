@@ -13,7 +13,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, ValidationEr
 class AccountCreate(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     type: AccountType
-    initial_balance: Decimal = Field(default=Decimal("0"), max_digits=14, decimal_places=2)
+    #ge=0: un bolsillo no se abre debiendo. El saldo en contra aparece despues,
+    #al gastar de un bolsillo que estaba en cero, y eso ya son movimientos.
+    initial_balance: Decimal = Field(
+        default=Decimal("0"), ge=0, max_digits=14, decimal_places=2
+    )
     icon: str | None = None
     color: str | None = None
 

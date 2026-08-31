@@ -129,6 +129,19 @@ class TransactionRepository:
 
     # ---------- escritura ----------
 
+    def find_system_category(self, name: str, kind) -> Category | None:
+        """Una categoria del sistema por su nombre. Las del sistema son de todos.
+
+        La usa la apertura de un bolsillo, que necesita "Saldo inicial" sin que
+        el usuario la elija: un ingreso sin categoria no lo acepta la tabla.
+        """
+        stmt = select(Category).where(
+            Category.user_id.is_(None),
+            func.lower(Category.name) == name.lower(),
+            Category.kind == kind,
+        )
+        return self._db.scalars(stmt).first()
+
     def create(
         self,
         user_id: uuid.UUID,
