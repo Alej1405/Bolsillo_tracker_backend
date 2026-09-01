@@ -231,10 +231,11 @@ quien tiene los índices. Lo que sigue es qué algoritmo usa cada una y por qué
 |---|---|---|---|
 | Un movimiento por su id | `transaction_repository.get_by_id` | Índice B-tree de la clave primaria | O(log n) |
 | Mis movimientos, por fecha | `transaction_repository.list_paginated` | Índice B-tree compuesto y parcial `ix_tx_user_date` | O(log n + k) |
-| Texto dentro de la nota | `_aplicar_filtros`, rama `search` | Ninguna: recorrido secuencial | O(n) |
+| Texto dentro de la nota | `_aplicar_filtros`, rama `search` | Trigramas sobre índice GIN | O(log n + k) |
+| Un usuario por nombre o correo | `user_repository.list_paginated`, rama `q` | Trigramas sobre índice GIN | O(log n + k) |
 | Movimientos de un bolsillo | `_aplicar_filtros`, rama `account_id` | Dos índices combinados con mapa de bits | O(log n + k) |
 | Movimientos de una categoría | `_aplicar_filtros`, rama `category_id` | Subconsulta de la familia + `ix_tx_category` | O(log n + k) |
-| El árbol de categorías | `category_repository.list_tree` | Dos consultas, no una por padre | O(p + h) |
+| El árbol de categorías | `category_repository.list_tree` | Recorrido en anchura, dos consultas | O(p + h) |
 | Un nombre repetido | `category_repository.get_by_name` | Índice único sobre `lower(name)` | O(log n) |
 
 `n` es el total de filas, `k` las que devuelve la página, `p` las categorías padre y `h` sus hijas.
@@ -297,6 +298,117 @@ deja de estorbar.
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX ix_tx_note_trgm ON transactions USING gin (note gin_trgm_ops);
 ```
+
+### Búsqueda por texto: trigramas e índice invertido
+
+Buscar una persona por su nombre y buscar una palabra dentro de una nota son el mismo
+problema, y el que peor resuelve un índice normal.
+
+`ILIKE '%maria%'` **no puede usar un B-tree**. Un árbol ordenado sirve para encontrar lo
+que empieza por algo; con el comodín delante no hay por dónde empezar a bajar, así que
+la base recorre la tabla entera. Y encima no perdona nada: `'maria'` no encuentra
+`'María'`.
+
+La solución son dos estructuras que trae PostgreSQL, **sin IA y sin servicios externos**:
+
+**Trigramas (`pg_trgm`).** Parte cada texto en grupos de tres letras. `María` produce
+`  m`, ` ma`, `mar`, `ari`, `ría`, `ía `. Buscar `maria` genera casi los mismos, así que
+coincide aunque falte la tilde o sobre una letra. Además devuelve una **similitud de 0 a
+1**, que sirve para ordenar por relevancia en vez de por fecha.
+
+**Índice GIN** (*Generalized Inverted Index*). Es un índice **invertido**: en lugar de
+ordenar filas por valor, guarda para cada trigrama la lista de filas que lo contienen. Es
+la misma estructura que usa un buscador web, y es lo que convierte el recorrido O(n) en
+una consulta que va directa a las filas candidatas.
+
+```sql
+-- db/11_busqueda.sql
+CREATE INDEX ix_users_busqueda ON users USING gin (
+    (inmutable_unaccent(lower(full_name)) || ' ' || inmutable_unaccent(lower(email)))
+    gin_trgm_ops
+);
+```
+
+Un solo índice sobre nombre y correo concatenados: así una comparación cubre los dos
+campos sin decidir por cuál buscar ni consultar dos veces.
+
+#### Tres detalles que hacen que funcione
+
+**`unaccent` hay que envolverlo.** PostgreSQL solo indexa expresiones `IMMUTABLE`, y
+`unaccent()` se declara `STABLE` porque depende de un diccionario que podría cambiar. El
+envoltorio fija el diccionario y con eso ya es determinista. Es el patrón recomendado en
+la documentación de PostgreSQL.
+
+**Los dos lados se normalizan.** La columna está sin tildes y la búsqueda llega con
+ellas: si solo se normaliza uno, `"andres"` encuentra y `"andrés"` no. Parece obvio y es
+el fallo más fácil de cometer.
+
+**`%>` y no `%`.** `similarity` compara contra el texto **entero**; `word_similarity`
+contra la **palabra más parecida** dentro de él. Medido sobre datos reales:
+
+| Buscando `maria` en `"maría guerrero maria.guerrero@ejemplo.com"` | Resultado |
+|---|---|
+| `similarity` — contra toda la cadena | **0,222** ← por debajo del umbral 0,3 |
+| `word_similarity` — contra cada palabra | **1,000** |
+
+Con `similarity` la búsqueda no devolvía nada, solo porque la cadena es larga.
+
+#### Hasta dónde perdona
+
+`word_similarity` exige 0,6 por defecto. Medido con nombres reales:
+
+| Escrito | Buscado | Parecido | ¿Lo encuentra? |
+|---|---|---|---|
+| `guerero` | Guerrero | 0,70 | sí |
+| `paredez` | Paredes | 0,75 | sí |
+| `cabrerra` | Cabrera | 0,70 | sí |
+| `lusia` | Lucía | 0,333 | **no** |
+
+El umbral se deja en 0,6 a propósito. Una errata en una palabra de siete u ocho letras
+entra; una letra cambiada en una de cinco da 0,333, y aceptar eso llenaría la lista de
+gente que nadie buscó.
+
+---
+
+### El borrado lógico: nada se pierde, todo deja de contar
+
+Borrar un movimiento **no borra la fila**. Marca `deleted_at` con la hora:
+
+```python
+# app/repositories/transaction_repository.py
+def soft_delete(self, movimiento: Transaction) -> None:
+    """No borra la fila: la marca. El historial se conserva."""
+    movimiento.deleted_at = func.now()
+```
+
+A partir de ahí, **toda** consulta que lea movimientos filtra por esa columna:
+
+```python
+# app/repositories/consultas.py
+def vivos() -> ColumnElement[bool]:
+    return Transaction.deleted_at.is_(None)
+```
+
+Esa condición estaba escrita en **ocho sitios de cinco archivos**. Ahora vive en uno solo,
+y no por elegancia: basta con que una consulta se la olvide para que un movimiento
+borrado reaparezca en un reporte, en un saldo o en las estadísticas del panel. Eso no se
+nota al escribirlo; se nota cuando las cifras no cuadran y nadie sabe por qué.
+
+Qué habilita:
+
+- **Deshacer.** El `POST` devuelve el `id`; si la persona se equivocó, un `DELETE` lo
+  retira de saldos y reportes al instante. Sin borrado lógico haría falta un endpoint de
+  restauración.
+- **Auditoría.** La fila sigue ahí con su fecha de borrado, así que se puede saber qué se
+  quitó y cuándo.
+- **Saldos que se recalculan solos.** Como todas las consultas filtran igual, no hay
+  ninguna cifra guardada que actualizar a mano.
+
+Lo que **no** hace: no hay restauración. La API no expone forma de revertir un borrado, y
+por eso el frontend confirma antes de borrar desde el historial y no confirma al deshacer
+lo recién anotado.
+
+---
 
 ### Filtrar por categoría: expandir la familia, sin recursión
 
@@ -475,6 +587,144 @@ WHERE t.deleted_at IS NULL
 ORDER BY t.occurred_at DESC, t.created_at DESC
 LIMIT 20;
 ```
+
+---
+
+### Auditar la base
+
+Consultas para revisar que los datos son consistentes. Ninguna modifica nada: se pueden
+correr en producción sin riesgo.
+
+**Movimientos borrados que siguen contando en algún sitio** — debe devolver 0 filas:
+
+```sql
+-- Si esto devuelve algo, hay una consulta en el código que se olvidó de
+-- filtrar `deleted_at IS NULL` y las cifras están mal en alguna pantalla.
+SELECT count(*) AS borrados_visibles
+FROM transactions
+WHERE deleted_at IS NOT NULL
+  AND id IN (SELECT id FROM transactions WHERE deleted_at IS NULL);
+```
+
+**Cuánto se ha borrado y cuándo:**
+
+```sql
+SELECT date_trunc('day', deleted_at)::date AS dia,
+       count(*)                            AS borrados,
+       sum(amount)                         AS monto_total
+FROM transactions
+WHERE deleted_at IS NOT NULL
+GROUP BY 1 ORDER BY 1 DESC;
+```
+
+**Bolsillos en negativo** — no es un error, pero conviene mirarlos:
+
+```sql
+-- Un saldo en contra casi siempre es un ingreso que no se registró, no una
+-- deuda real. Es lo que la aplicación explica en la tarjeta del bolsillo.
+SELECT a.name, u.email,
+       a.initial_balance
+       + coalesce(sum(CASE WHEN t.type = 'income'   THEN  t.amount
+                           WHEN t.type = 'expense'  THEN -t.amount END), 0) AS saldo
+FROM accounts a
+JOIN users u ON u.id = a.user_id
+LEFT JOIN transactions t ON t.account_id = a.id AND t.deleted_at IS NULL
+GROUP BY a.id, a.name, u.email, a.initial_balance
+HAVING a.initial_balance
+       + coalesce(sum(CASE WHEN t.type = 'income'  THEN  t.amount
+                           WHEN t.type = 'expense' THEN -t.amount END), 0) < 0;
+```
+
+**Transferencias descuadradas** — debe devolver 0 filas:
+
+```sql
+-- Una transferencia mueve plata entre dos bolsillos propios: si le falta el
+-- bolsillo de destino, resta de un lado sin sumar al otro y hay dinero que
+-- desaparece del patrimonio.
+SELECT id, amount, occurred_at
+FROM transactions
+WHERE type = 'transfer' AND counter_account_id IS NULL AND deleted_at IS NULL;
+```
+
+**Que los índices de búsqueda se estén usando:**
+
+```sql
+-- `idx_scan` cuenta cuántas veces se ha usado cada índice desde el último
+-- reinicio. Si un índice de búsqueda marca 0 después de varias búsquedas, la
+-- consulta del código dejó de coincidir con la expresión que se indexó.
+SELECT indexrelname AS indice, idx_scan AS veces_usado
+FROM pg_stat_user_indexes
+WHERE indexrelname LIKE 'ix_%busqueda%' OR indexrelname LIKE 'ix_%nota%'
+ORDER BY idx_scan DESC;
+```
+
+**Ver el plan de una búsqueda** — para comprobar que no recorre la tabla:
+
+```sql
+EXPLAIN ANALYZE
+SELECT id FROM users
+WHERE (inmutable_unaccent(lower(full_name)) || ' ' ||
+       inmutable_unaccent(lower(email))) %> 'maria';
+-- Debe decir "Bitmap Index Scan on ix_users_busqueda", no "Seq Scan on users".
+```
+
+**Huérfanos** — filas que apuntan a algo que ya no existe. Debe devolver 0:
+
+```sql
+SELECT 'movimientos sin bolsillo' AS problema, count(*) FROM transactions t
+  LEFT JOIN accounts a ON a.id = t.account_id WHERE a.id IS NULL
+UNION ALL
+SELECT 'bolsillos sin dueño', count(*) FROM accounts a
+  LEFT JOIN users u ON u.id = a.user_id WHERE u.id IS NULL;
+```
+
+---
+
+## Pruebas
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+
+createdb finance_tracker_test
+export TEST_DATABASE_URL="postgresql+psycopg://$USER@localhost:5432/finance_tracker_test"
+
+pytest
+```
+
+**38 pruebas** en dos niveles, y la diferencia importa:
+
+| | Qué prueban | Necesitan base | Cuánto tardan |
+|---|---|---|---|
+| `test_reglas.py` | Las reglas de entrada: qué acepta y qué rechaza la API | No | milisegundos |
+| `test_integracion.py` | La API entera por HTTP: saldos, permisos, aislamiento entre cuentas | Sí | segundos |
+| `test_busqueda.py` | Que los trigramas encuentren sin tildes y con erratas | Sí | segundos |
+
+Sin PostgreSQL de pruebas, las de integración **se saltan con un aviso** en vez de fallar:
+una prueba en rojo por falta de entorno enseña a ignorar el rojo, y eso cuesta más que no
+tenerla.
+
+### La base de pruebas se construye con las migraciones reales
+
+No con `Base.metadata.create_all()`. Ese crea el esquema que describen los modelos de
+Python, que **no es** el que hay en producción: los tipos `ENUM`, los `CHECK`, los índices
+y las extensiones viven en los `.sql`. Probar contra un esquema distinto del real es
+probar otra cosa.
+
+De paso, verifica que las migraciones corren de principio a fin. Ya sirvió: la propia
+migración `11_busqueda.sql` tenía un error de precedencia —`%` liga más fuerte que `||`—
+y las pruebas no arrancaron hasta corregirlo.
+
+**Nunca se conectan a producción.** La URL sale de `TEST_DATABASE_URL` y, si el nombre de
+la base no contiene `test`, el arranque se aborta. Las pruebas crean y borran tablas.
+
+### Qué se prueba de verdad
+
+La que más importa está en `TestAislamientoEntreCuentas`: que nadie vea los bolsillos ni
+los movimientos de otro. Si esa falla, una persona ve el dinero de otra.
+
+Las demás cubren el saldo (que un gasto baje, que borrar lo devuelva, que editar
+recalcule), que una transferencia no cambie el patrimonio, y que un cliente no pueda
+entrar a lo del administrador.
 
 ---
 
