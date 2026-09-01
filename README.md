@@ -775,6 +775,28 @@ probar todas las rutas sin escribir una línea de código.
 
 ## Despliegue
 
+### Las fotos de perfil van fuera del proyecto
+
+`MEDIA_DIR` **debe apuntar a una carpeta que el despliegue no toque**. En el servidor:
+
+```bash
+sudo mkdir -p /srv/bolsillo-media/avatares
+sudo chown -R lab:lab /srv/bolsillo-media
+# y en el .env:
+MEDIA_DIR=/srv/bolsillo-media
+```
+
+Con el valor por defecto —`media`, relativo— la carpeta cae dentro del directorio del
+proyecto, que está en el `.gitignore` y se queda vacío en cada despliegue. El resultado
+es que los `avatar_url` de la base siguen apuntando a archivos que ya no existen: la API
+responde 404 y el navegador pinta su icono de imagen rota donde debería estar la cara de
+la persona.
+
+Pasó de verdad, y se descubrió en una auditoría: el avatar del super admin llevaba
+tiempo así. El frontend ahora cae a las iniciales si la imagen falla, pero eso es la red
+de seguridad, no el arreglo: el arreglo es que la carpeta sobreviva.
+
+
 Cada push a `main` dispara [`.github/workflows/desplegar.yml`](.github/workflows/desplegar.yml):
 
 ```
