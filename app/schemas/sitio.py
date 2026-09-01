@@ -80,3 +80,9 @@ class VideoRead(BaseModel):
 
 class VideoVisibility(BaseModel):
     visible: bool
+
+
+class VideoPorEnlace(BaseModel):
+    """Un video anadido pegando su enlace, sin conectar la cuenta."""
+
+    url: str = Field(min_length=10, max_length=400)

@@ -21,6 +21,10 @@ TIKTOK_TOKEN = "https://open.tiktokapis.com/v2/oauth/token/"
 TIKTOK_AUTORIZAR = "https://www.tiktok.com/v2/auth/authorize/"
 TIKTOK_VIDEOS = "https://open.tiktokapis.com/v2/video/list/"
 TIKTOK_USUARIO = "https://open.tiktokapis.com/v2/user/info/"
+#El oEmbed publico. A diferencia de los de arriba no pide credenciales ni
+#autorizacion: con la URL de un video devuelve su titulo, su portada y el HTML
+#para incrustarlo. Es lo que permite pegar enlaces a mano sin conectar la cuenta.
+TIKTOK_OEMBED = "https://www.tiktok.com/oembed"
 
 #Lo que se le pide a TikTok: leer el perfil y la lista de videos. Nada de
 #publicar ni de borrar — la aplicacion solo muestra.
@@ -228,6 +232,70 @@ class SitioService:
 
         self._repo.actualizar_tiktok({"synced_at": datetime.now(timezone.utc)})
         return {"traidos": len(videos), **self.estado_tiktok()}
+
+    def agregar_por_enlace(self, url: str):
+        """Guarda un video pegando su enlace, sin conectar la cuenta.
+
+        Es el camino corto: quien administra copia el enlace del video desde
+        TikTok y lo pega. Los datos —titulo y portada— salen del oEmbed publico,
+        que no pide credenciales ni autorizacion de nadie.
+
+        Convive con la sincronizacion: si el mismo video aparece luego en la
+        lista de la API, se actualiza en vez de duplicarse, porque `video_id` es
+        el mismo y el repositorio busca antes de insertar.
+        """
+        limpia = url.strip()
+        if "tiktok.com" not in limpia:
+            raise ValidationError("Eso no parece un enlace de TikTok")
+
+        try:
+            with httpx.Client(timeout=20, follow_redirects=True) as cliente:
+                r = cliente.get(TIKTOK_OEMBED, params={"url": limpia})
+        except httpx.HTTPError as exc:
+            raise ValidationError(f"No pudimos leer ese enlace: {exc}") from exc
+
+        if r.status_code >= 400:
+            raise ValidationError(
+                "TikTok no reconoce ese enlace. Comprueba que el video sea publico"
+            )
+
+        try:
+            datos = r.json()
+        except ValueError:
+            raise ValidationError("TikTok respondio algo que no entendemos")
+
+        #El id del video va en la propia URL: .../video/7123456789012345678
+        video_id = self._id_del_enlace(limpia) or datos.get("embed_product_id")
+        if not video_id:
+            raise ValidationError("No pudimos sacar el identificador del video de ese enlace")
+
+        return self._repo.guardar_video(
+            {
+                "video_id": str(video_id),
+                "title": datos.get("title"),
+                "cover_url": datos.get("thumbnail_url"),
+                "share_url": limpia,
+                "embed_link": f"https://www.tiktok.com/embed/v2/{video_id}",
+                #El oEmbed no dice cuando se publico. Se deja vacio en vez de
+                #inventar una fecha: el orden lo pone quien lo pega.
+                "published_at": None,
+            }
+        )
+
+    def quitar_video(self, video_id: str) -> None:
+        """Borra un video de la lista. Solo de la nuestra: en TikTok sigue."""
+        video = self._repo.video_por_id(video_id)
+        if video is None:
+            raise ValidationError("Ese video no esta guardado")
+        self._repo.borrar_video(video)
+
+    @staticmethod
+    def _id_del_enlace(url: str) -> str | None:
+        """El identificador que TikTok pone en la propia URL del video."""
+        import re
+
+        encontrado = re.search(r"/video/(\d+)", url)
+        return encontrado.group(1) if encontrado else None
 
     def mostrar_video(self, video_id: str, visible: bool):
         """Esconde o vuelve a mostrar un video sin borrarlo ni resincronizar."""

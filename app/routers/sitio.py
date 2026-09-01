@@ -11,7 +11,7 @@ lados: la landing lee, el super_admin escribe.
 
 import secrets
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -24,6 +24,7 @@ from app.schemas.sitio import (
     TiktokCredentials,
     TiktokStatus,
     TiktokSynced,
+    VideoPorEnlace,
     VideoRead,
     VideoVisibility,
 )
@@ -184,6 +185,44 @@ def videos_admin(
 ):
     """Incluye los escondidos, que la landing no muestra."""
     return service.todos_los_videos()
+
+
+@router.post(
+    "/tiktok/videos",
+    response_model=VideoRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Agregar un video pegando su enlace (solo super_admin)",
+)
+def agregar_video(
+    datos: VideoPorEnlace,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_super_admin),
+    service: SitioService = Depends(get_sitio_service),
+):
+    """El camino corto: no hace falta conectar la cuenta ni tener credenciales.
+
+    El titulo y la portada salen del oEmbed publico de TikTok, que funciona con
+    cualquier video publico sin autorizacion de nadie.
+    """
+    video = service.agregar_por_enlace(datos.url)
+    db.commit()
+    return video
+
+
+@router.delete(
+    "/tiktok/videos/{video_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Quitar un video de la lista (solo super_admin)",
+)
+def quitar_video(
+    video_id: str,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_super_admin),
+    service: SitioService = Depends(get_sitio_service),
+):
+    """Lo borra de la web. En TikTok sigue donde estaba."""
+    service.quitar_video(video_id)
+    db.commit()
 
 
 @router.patch(

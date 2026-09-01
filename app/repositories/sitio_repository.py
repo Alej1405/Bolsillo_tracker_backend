@@ -81,6 +81,10 @@ class SitioRepository:
         self._db.flush()
         return video
 
+    def borrar_video(self, video: TiktokVideo) -> None:
+        self._db.delete(video)
+        self._db.flush()
+
     def ocultar_video(self, video: TiktokVideo, visible: bool) -> TiktokVideo:
         video.visible = visible
         self._db.flush()
