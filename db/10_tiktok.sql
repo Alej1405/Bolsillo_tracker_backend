@@ -66,6 +66,29 @@ CREATE TRIGGER tg_tiktok_config_updated
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 
+-- -----------------------------------------------------------------------------
+--  Quién manda sobre estas tablas
+--
+--  Si este archivo se corre como `postgres` —que es lo cómodo, porque es quien
+--  puede crear tipos y extensiones—, las tablas nacen siendo suyas y la
+--  aplicación, que se conecta como `finance_user`, recibe un
+--  "permission denied" en la primera consulta.
+--
+--  Esto lo deja como las tablas de los primeros módulos, que sí son de
+--  `finance_user`. Es idempotente: correrlo dos veces no cambia nada.
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE t text;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'finance_user') THEN
+        FOREACH t IN ARRAY ARRAY['tiktok_config','tiktok_videos']
+        LOOP
+            EXECUTE format('ALTER TABLE %I OWNER TO finance_user', t);
+        END LOOP;
+    END IF;
+END
+$$;
+
 -- =============================================================================
 --  Verificación
 -- =============================================================================
