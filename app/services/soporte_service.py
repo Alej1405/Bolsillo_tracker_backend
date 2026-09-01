@@ -84,7 +84,7 @@ class SoporteService:
     def listar(self, page: int, page_size: int, status: SupportStatus | None = None) -> dict:
         items, total = self._repo.listar(page, page_size, status)
         return {
-            "items": items,
+            "items": [self._con_quien(h) for h in items],
             "page": page,
             "page_size": page_size,
             "total": total,
@@ -97,6 +97,20 @@ class SoporteService:
         hilo = self._repo.get(thread_id)
         if hilo is None:
             raise NotFound("No encontramos esa conversacion")
+        return self._con_quien(hilo)
+
+    @staticmethod
+    def _con_quien(hilo: SupportThread) -> SupportThread:
+        """Deja a mano el nombre y el correo de quien escribio.
+
+        La bandeja tiene que decir a quien esta contestando, y esa informacion
+        vive en dos sitios: en la ficha del usuario si tiene cuenta, y en el
+        propio hilo si escribio desde el formulario de la web. Se resuelve aqui
+        para que el schema no tenga que saber de relaciones.
+        """
+        if hilo.user is not None:
+            hilo.name = hilo.user.full_name
+            hilo.email = hilo.user.email
         return hilo
 
     def responder_como_admin(

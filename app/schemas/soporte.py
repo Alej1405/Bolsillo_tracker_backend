@@ -7,7 +7,7 @@ español, pero eso es cosa del frontend.
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.models.soporte import SupportStatus
 
@@ -34,11 +34,27 @@ class ThreadRead(BaseModel):
 
 
 class ThreadAdminRead(ThreadRead):
-    """Lo mismo, y ademas de quien es. Solo para el administrador."""
+    """Lo mismo, y ademas de quien es. Solo para el administrador.
+
+    El nombre y el correo se resuelven aqui de las dos fuentes posibles: si el
+    hilo es de alguien con cuenta salen de su ficha, y si lo abrio un invitado
+    del formulario salen de lo que dejo escrito. Asi la bandeja siempre sabe a
+    quien esta contestando sin tener que preguntar por cada usuario.
+    """
 
     user_id: uuid.UUID | None = None
     guest_name: str | None = None
     guest_email: str | None = None
+    name: str | None = None
+    email: str | None = None
+
+    @model_validator(mode="after")
+    def resolver_quien(self):
+        if self.name is None:
+            self.name = self.guest_name
+        if self.email is None:
+            self.email = self.guest_email
+        return self
 
 
 class ThreadCreate(BaseModel):
