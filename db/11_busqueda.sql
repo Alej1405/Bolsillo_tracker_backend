@@ -114,13 +114,23 @@ ORDER BY indexname;
 
 \echo ''
 \echo '--- Prueba: buscar "maria" sin tilde debe encontrar "María" ---'
+--  Usa `%>` (word_similarity), la MISMA medida que la API.
+--
+--  Con `%` (similarity a secas) esta comprobacion devolvia cero filas y
+--  parecia que la migracion habia fallado: `similarity` compara contra la
+--  cadena ENTERA —nombre mas correo— y "maria" contra
+--  "maria guerrero maria.guerrero@ejemplo.com" da 0.222, por debajo del
+--  umbral de 0.3. Comparando contra la palabra mas parecida da 1.000.
+--
+--  Verificar con una medida distinta de la que usa el codigo es no verificar
+--  nada: o da un susto que no toca, o aprueba algo que no se probo.
 SELECT full_name, email,
-       round(similarity(
-           inmutable_unaccent(lower(full_name)) || ' ' || inmutable_unaccent(lower(email)),
-           'maria'
+       round(word_similarity(
+           'maria',
+           inmutable_unaccent(lower(full_name)) || ' ' || inmutable_unaccent(lower(email))
        )::numeric, 3) AS parecido
 FROM users
 WHERE (inmutable_unaccent(lower(full_name)) || ' ' || inmutable_unaccent(lower(email)))
-      % 'maria'
+      %> 'maria'
 ORDER BY parecido DESC
 LIMIT 5;
