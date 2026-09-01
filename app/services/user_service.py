@@ -134,10 +134,20 @@ class UserService:
     # ── operaciones del super_admin ───────────────────────────────────────
 
     def list_users(
-        self, page: int, page_size: int, is_active: bool | None = None
+        self,
+        page: int,
+        page_size: int,
+        is_active: bool | None = None,
+        q: str | None = None,
     ) -> dict:
-        """Una pagina del listado, con los totales ya calculados."""
-        items, total = self._repo.list_paginated(page, page_size, is_active)
+        """
+        Una pagina del listado, con los totales ya calculados.
+
+        `total` cuenta los que cumplen los filtros, busqueda incluida: es lo
+        que hace que la paginacion sea correcta al buscar. Si contara todos,
+        la interfaz mostraria paginas vacias.
+        """
+        items, total = self._repo.list_paginated(page, page_size, is_active, q)
         return {
             "items": items,
             "page": page,

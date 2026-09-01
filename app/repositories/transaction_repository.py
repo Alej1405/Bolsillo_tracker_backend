@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.category import Category
 from app.models.transaction import Transaction, TransactionType
+from app.repositories.consultas import normalizado, paginar, parecido_a, vivos
 
 
 class TransactionRepository:
@@ -28,7 +29,7 @@ class TransactionRepository:
         """El punto de partida de toda consulta: mis movimientos, no borrados."""
         return select(Transaction).where(
             Transaction.user_id == user_id,
-            Transaction.deleted_at.is_(None),
+            vivos(),
         )
 
     def _aplicar_filtros(
@@ -62,7 +63,10 @@ class TransactionRepository:
             )
             stmt = stmt.where(Transaction.category_id.in_(familia))
         if search:
-            stmt = stmt.where(Transaction.note.ilike(f"%{search}%"))
+            # antes era un ILIKE con comodin delante, que no puede usar indice
+            # y recorria la tabla entera. Ahora va por trigramas: ademas de
+            # aprovechar el GIN, encuentra "cafe" escrito "café" y al reves.
+            stmt = stmt.where(parecido_a(normalizado(Transaction.note), search.strip().lower()))
         return stmt
 
     def list_paginated(
@@ -83,9 +87,8 @@ class TransactionRepository:
         stmt = (
             stmt.options(joinedload(Transaction.category).joinedload(Category.parent))
             .order_by(Transaction.occurred_at.desc(), Transaction.created_at.desc())
-            .limit(page_size)
-            .offset((page - 1) * page_size)
         )
+        stmt = paginar(stmt, page, page_size)
         filas = list(self._db.scalars(stmt).unique().all())
         return filas, total
 
@@ -108,7 +111,7 @@ class TransactionRepository:
         """Cuantos movimientos vivos usan esta categoria (para el 409 IN_USE)."""
         stmt = select(func.count()).where(
             Transaction.category_id == category_id,
-            Transaction.deleted_at.is_(None),
+            vivos(),
         )
         return self._db.scalar(stmt) or 0
 

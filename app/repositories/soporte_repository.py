@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.soporte import SupportMessage, SupportStatus, SupportThread
+from app.repositories.consultas import paginar
 
 
 class SoporteRepository:
@@ -46,9 +47,8 @@ class SoporteRepository:
             .where(*filtros)
             .options(selectinload(SupportThread.messages))
             .order_by(SupportThread.updated_at.desc())
-            .limit(page_size)
-            .offset((page - 1) * page_size)
         )
+        stmt = paginar(stmt, page, page_size)
         return list(self._db.scalars(stmt).unique().all()), total
 
     def get(self, thread_id: uuid.UUID) -> SupportThread | None:

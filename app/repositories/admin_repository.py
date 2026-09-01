@@ -16,6 +16,7 @@ from app.models.account import Account
 from app.models.category import Category
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
+from app.repositories.consultas import vivos
 
 
 class AdminRepository:
@@ -42,7 +43,7 @@ class AdminRepository:
 
     def movimientos(self, desde: date | None = None) -> int:
         """Movimientos vivos. Con `desde`, solo los de esa fecha en adelante."""
-        filtros = [Transaction.deleted_at.is_(None)]
+        filtros = [vivos()]
         if desde is not None:
             filtros.append(Transaction.occurred_at >= desde)
         return self._db.scalar(select(func.count(Transaction.id)).where(*filtros)) or 0
@@ -61,7 +62,7 @@ class AdminRepository:
             suma(TransactionType.INCOME),
             suma(TransactionType.EXPENSE),
         ).where(
-            Transaction.deleted_at.is_(None),
+            vivos(),
             Transaction.occurred_at >= desde,
             Transaction.occurred_at <= hasta,
         )
@@ -87,7 +88,7 @@ class AdminRepository:
         entre esto y el total de cuentas dice cuantas se quedaron vacias.
         """
         stmt = select(func.count(func.distinct(Transaction.user_id))).where(
-            Transaction.deleted_at.is_(None),
+            vivos(),
             Transaction.occurred_at >= desde,
         )
         return self._db.scalar(stmt) or 0
@@ -101,7 +102,7 @@ class AdminRepository:
             )
             .join(Transaction, Transaction.category_id == Category.id)
             .where(
-                Transaction.deleted_at.is_(None),
+                vivos(),
                 Transaction.type == TransactionType.EXPENSE,
             )
             .group_by(Category.name)

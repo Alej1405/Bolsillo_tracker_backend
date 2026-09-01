@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.category import Category, CategoryKind
 from app.models.transaction import Transaction
+from app.repositories.consultas import vivos
 
 
 class CategoryRepository:
@@ -83,7 +84,7 @@ class CategoryRepository:
         """Movimientos vivos que usan esta categoria (para el 409 IN_USE)."""
         stmt = select(func.count()).where(
             Transaction.category_id == category_id,
-            Transaction.deleted_at.is_(None),
+            vivos(),
         )
         return self._db.scalar(stmt) or 0
 

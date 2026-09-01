@@ -5,6 +5,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 #importando el modelo de Usuario
 from app.models.user import User
+from sqlalchemy import literal
+from app.repositories.consultas import normalizado, paginar, parecido_a, relevancia
 
 class UserRepository:
     def __init__(self, db: Session):
@@ -21,21 +23,42 @@ class UserRepository:
         self._db.flush()                                #hace el insert en la dbb y devuelve el id
         return usuario                                  #devuelve el objeto que creamos
 
-    def list_paginated(self, page: int, page_size: int, is_active: bool | None = None) -> tuple[list[User], int] :
-        """devuelve el total de los usuarios que cumplen con los filtros"""
+    def list_paginated(
+        self,
+        page: int,
+        page_size: int,
+        is_active: bool | None = None,
+        q: str | None = None,
+    ) -> tuple[list[User], int]:
+        """
+        Los usuarios que cumplen los filtros, y cuantos son en total.
+
+        `q` busca a la vez en el nombre y en el correo, sin distinguir tildes
+        ni mayusculas y perdonando erratas. La expresion es la misma que se
+        indexo en db/11_busqueda.sql: nombre y correo concatenados, para que
+        una sola comparacion cubra los dos campos.
+        """
         filtros = []
         if is_active is not None:
             filtros.append(User.is_active == is_active)
 
+        # nombre + correo, ya normalizados, igual que en el indice
+        buscable = normalizado(User.full_name) + literal(" ") + normalizado(User.email)
+        if q and q.strip():
+            filtros.append(parecido_a(buscable, q.strip().lower()))
+
         total = self._db.scalar(select(func.count(User.id)).where(*filtros))
 
-        stmt = (
-            select(User)
-            .where(*filtros)
-            .order_by(User.created_at.desc())
-            .limit(page_size)
-            .offset( (page - 1) * page_size)
-        )
+        stmt = select(User).where(*filtros)
+        if q and q.strip():
+            # lo mas parecido primero; a igual parecido, lo mas reciente
+            stmt = stmt.order_by(
+                relevancia(buscable, q.strip().lower()).desc(), User.created_at.desc()
+            )
+        else:
+            stmt = stmt.order_by(User.created_at.desc())
+
+        stmt = paginar(stmt, page, page_size)
         return list(self._db.scalars(stmt).all()), total
 
     def get_by_id(self, user_id: uuid.UUID, ) -> User | None :

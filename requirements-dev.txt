@@ -1,0 +1,7 @@
+# Dependencias solo para desarrollo y pruebas.
+# NO se instalan en el servidor: en producción no se corren pruebas, y cada
+# paquete de más es superficie de ataque y peso en el arranque.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+-r requirements.txt
+pytest==9.1.1

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, aliased
 from app.models.account import Account, AccountType
 from app.models.category import Category
 from app.models.transaction import Transaction, TransactionType
+from app.repositories.consultas import vivos
 
 CERO = Decimal("0.00")
 
@@ -30,7 +31,7 @@ class ReportRepository:
         """Las condiciones que toda consulta de reporte comparte."""
         return [
             Transaction.user_id == user_id,
-            Transaction.deleted_at.is_(None),
+            vivos(),
         ]
 
     def _suma_si(self, tipo: TransactionType):

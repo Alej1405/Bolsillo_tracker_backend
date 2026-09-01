@@ -124,10 +124,15 @@ def list_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     is_active: bool | None = Query(None, description="Sin este filtro vienen activos e inactivos"),
+    q: str | None = Query(
+        None,
+        max_length=100,
+        description="Busca en nombre y correo. Ignora tildes y mayusculas, y tolera erratas.",
+    ),
     _admin: User = Depends(require_super_admin),
     service: UserService = Depends(get_user_service),
 ):
-    return service.list_users(page, page_size, is_active)
+    return service.list_users(page, page_size, is_active, q)
 
 
 @router.get(
