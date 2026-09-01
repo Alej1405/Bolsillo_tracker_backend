@@ -3,7 +3,17 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
-from app.routers import accounts, admin, auth, categories, reports, transactions, users
+from app.routers import (
+    accounts,
+    admin,
+    auth,
+    categories,
+    reports,
+    sitio,
+    soporte,
+    transactions,
+    users,
+)
 from app.core.errors import DomainError
 
 #control de cors
@@ -51,3 +61,5 @@ app.include_router(transactions.router, prefix="/api/v1")
 app.include_router(transactions.transfers_router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
+app.include_router(soporte.router, prefix="/api/v1")
+app.include_router(sitio.router, prefix="/api/v1")

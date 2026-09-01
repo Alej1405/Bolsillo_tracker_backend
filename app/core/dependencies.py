@@ -17,6 +17,8 @@ from app.repositories.account_repository import AccountRepository
 from app.repositories.category_repository import CategoryRepository
 from app.repositories.report_repository import ReportRepository
 from app.repositories.admin_repository import AdminRepository
+from app.repositories.sitio_repository import SitioRepository
+from app.repositories.soporte_repository import SoporteRepository
 from app.repositories.transaction_repository import TransactionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.account_service import AccountService
@@ -24,6 +26,8 @@ from app.services.auth_service import AuthService
 from app.services.category_service import CategoryService
 from app.services.email_service import EmailService
 from app.services.admin_service import AdminService
+from app.services.sitio_service import SitioService
+from app.services.soporte_service import SoporteService
 from app.services.report_service import ReportService
 from app.services.transaction_service import TransactionService
 from app.services.user_service import UserService
@@ -81,6 +85,14 @@ def get_category_service(db: Session = Depends(get_db)) -> CategoryService:
 def get_transaction_service(db: Session = Depends(get_db)) -> TransactionService:
     #dos repositorios: los movimientos y las cuentas que hay que validar
     return TransactionService(TransactionRepository(db), AccountRepository(db))
+
+
+def get_soporte_service(db: Session = Depends(get_db)) -> SoporteService:
+    return SoporteService(SoporteRepository(db))
+
+
+def get_sitio_service(db: Session = Depends(get_db)) -> SitioService:
+    return SitioService(SitioRepository(db))
 
 
 def get_admin_service(db: Session = Depends(get_db)) -> AdminService:
